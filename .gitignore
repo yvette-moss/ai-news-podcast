@@ -1,0 +1,23 @@
+# Secrets -- never commit these
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated output (scripts, audio) -- regenerated every run
+output/
+*.mp3
+*.ogg
+*.log
+
+# OS / editor cruft
+.DS_Store
+.!*!.env
+
+# Local Claude Code session config -- not part of the project
+.claude/
