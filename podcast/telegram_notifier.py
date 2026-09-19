@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -22,6 +23,9 @@ TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/{method}"
 CAPTION_SAFE_LEN = 950  # leave headroom below the hard 1024 limit
 MESSAGE_MAX_LEN = 4096  # Telegram's hard limit for sendMessage text
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+# Keycap numeral emojis, used instead of plain "1." "2." for a friendlier-looking
+# list. Telegram renders these as small numbered badges. Supports up to 10 items.
+_KEYCAP_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -96,15 +100,17 @@ class TelegramNotifier:
 
     @staticmethod
     def _build_headline_list(articles: List[Article], max_headlines: int = 5) -> str:
+        title = f"🎙️ <b>AI News Podcast</b> — {datetime.now():%d.%m.%Y}"
         if not articles:
-            return "Your AI news podcast is ready."
+            return f"{title}\n\nYour AI news podcast is ready. 🎧"
 
-        lines = ["Today's AI headlines:"]
+        lines = [title, ""]
         for i, article in enumerate(articles[:max_headlines], start=1):
-            title = html.escape(article.title)
+            keycap = _KEYCAP_EMOJIS[i - 1] if i <= len(_KEYCAP_EMOJIS) else f"{i}."
+            headline = html.escape(article.title)
             source = html.escape(article.source)
             href = html.escape(article.link, quote=True)
-            lines.append(f'{i}. <a href="{href}">{title}</a> ({source})')
+            lines.append(f'{keycap} <a href="{href}">{headline}</a> 📰 <i>{source}</i>')
 
         return "\n".join(lines)
 

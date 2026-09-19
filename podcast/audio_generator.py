@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 import edge_tts
@@ -49,8 +50,9 @@ class AudioGenerator:
 
     def generate(self, script_text: str, output_dir: Path) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
-        raw_mp3 = output_dir / "episode_raw.mp3"
-        final_ogg = output_dir / "episode.ogg"
+        base_name = f"{datetime.now():%d_%m_%Y}_AI_News_podcast"
+        raw_mp3 = output_dir / f"{base_name}_raw.mp3"
+        final_ogg = output_dir / f"{base_name}.ogg"
 
         self._synthesize(script_text, raw_mp3)
         self._compress_to_voice_note(raw_mp3, final_ogg)
