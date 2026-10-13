@@ -8,11 +8,12 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import requests
 
 from .feed_fetcher import Article
+from .telegraph_publisher import TelegraphPublisher, TelegraphPublishError
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,34 @@ class TelegramNotifier:
     def send_text_episode(self, script_text: str, headline_articles: List[Article]) -> None:
         """Fallback when voice generation fails: deliver the script as text messages.
 
-        Sends the headline list first, then the script split at paragraph boundaries
-        into chunks that fit Telegram's sendMessage limit. Raises TelegramDeliveryError
-        if any chunk fails, so the caller knows the episode wasn't delivered.
+        Preferred: publish the script as a Telegraph article and send a single message
+        (headline list + link, opened in Telegram's Instant View). If Telegraph is
+        unavailable, send the headline list followed by the script split at paragraph
+        boundaries into chunks that fit Telegram's sendMessage limit. Raises
+        TelegramDeliveryError if delivery fails, so the caller knows it wasn't delivered.
         """
         notice = "🔇 <i>Voice generation is unavailable today, so here's the episode as text.</i>"
-        header = f"{self._build_headline_list(headline_articles)}\n\n{notice}"
+        headline_list = self._build_headline_list(headline_articles)
+
+        try:
+            article_url = TelegraphPublisher().publish(
+                title=f"AI News Podcast — {datetime.now():%d.%m.%Y}",
+                script_text=script_text,
+                source_articles=headline_articles,
+            )
+        except TelegraphPublishError as exc:
+            logger.warning("Telegraph publish failed, sending script as split messages: %s", exc)
+        else:
+            link = f'📖 <a href="{html.escape(article_url, quote=True)}"><b>Read today\'s full episode</b></a>'
+            # Reserve room for the notice + link so truncation only ever drops headlines.
+            footer = f"\n\n{notice}\n\n{link}"
+            body = self._truncate_at_line_boundary(headline_list, MESSAGE_MAX_LEN - len(footer))
+            # Preview the article (not the first headline) so the Instant View card shows.
+            self._post_html_message(body + footer, preview_url=article_url)
+            logger.info("Text episode delivered to chat %s via Telegraph", self.chat_id)
+            return
+
+        header = f"{headline_list}\n\n{notice}"
         self._post_html_message(self._truncate_at_line_boundary(header, MESSAGE_MAX_LEN))
 
         for chunk in self._split_into_chunks(html.escape(script_text.strip()), MESSAGE_MAX_LEN):
@@ -82,8 +105,9 @@ class TelegramNotifier:
 
         logger.info("Text episode delivered to chat %s", self.chat_id)
 
-    def _post_html_message(self, html_text: str) -> None:
+    def _post_html_message(self, html_text: str, preview_url: Optional[str] = None) -> None:
         url = TELEGRAM_API_BASE.format(token=self.bot_token, method="sendMessage")
+        preview = {"url": preview_url} if preview_url else {"is_disabled": True}
         try:
             response = requests.post(
                 url,
@@ -91,7 +115,7 @@ class TelegramNotifier:
                     "chat_id": self.chat_id,
                     "text": html_text,
                     "parse_mode": "HTML",
-                    "link_preview_options": json.dumps({"is_disabled": True}),
+                    "link_preview_options": json.dumps(preview),
                 },
                 timeout=30,
             )
