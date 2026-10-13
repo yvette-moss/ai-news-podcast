@@ -66,6 +66,66 @@ class TelegramNotifier:
         if not fits_in_caption:
             self._send_html_message(headline_list)
 
+    def send_text_episode(self, script_text: str, headline_articles: List[Article]) -> None:
+        """Fallback when voice generation fails: deliver the script as text messages.
+
+        Sends the headline list first, then the script split at paragraph boundaries
+        into chunks that fit Telegram's sendMessage limit. Raises TelegramDeliveryError
+        if any chunk fails, so the caller knows the episode wasn't delivered.
+        """
+        notice = "🔇 <i>Voice generation is unavailable today, so here's the episode as text.</i>"
+        header = f"{self._build_headline_list(headline_articles)}\n\n{notice}"
+        self._post_html_message(self._truncate_at_line_boundary(header, MESSAGE_MAX_LEN))
+
+        for chunk in self._split_into_chunks(html.escape(script_text.strip()), MESSAGE_MAX_LEN):
+            self._post_html_message(chunk)
+
+        logger.info("Text episode delivered to chat %s", self.chat_id)
+
+    def _post_html_message(self, html_text: str) -> None:
+        url = TELEGRAM_API_BASE.format(token=self.bot_token, method="sendMessage")
+        try:
+            response = requests.post(
+                url,
+                data={
+                    "chat_id": self.chat_id,
+                    "text": html_text,
+                    "parse_mode": "HTML",
+                    "link_preview_options": json.dumps({"is_disabled": True}),
+                },
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            raise TelegramDeliveryError(f"Network error sending text message: {exc}") from exc
+        if not response.ok:
+            raise TelegramDeliveryError(f"Telegram API returned {response.status_code}: {response.text}")
+
+    @staticmethod
+    def _split_into_chunks(text: str, max_len: int) -> List[str]:
+        """Split on paragraph, then line, then word boundaries so each chunk is <= max_len.
+
+        Input must already be HTML-escaped; splitting on whitespace never cuts an entity.
+        """
+        chunks: List[str] = []
+        current = ""
+        for paragraph in text.split("\n\n"):
+            candidate = f"{current}\n\n{paragraph}" if current else paragraph
+            if len(candidate) <= max_len:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+            # A single paragraph longer than max_len: hard-wrap on word boundaries.
+            while len(paragraph) > max_len:
+                cut = paragraph.rfind(" ", 0, max_len)
+                cut = cut if cut > 0 else max_len
+                chunks.append(paragraph[:cut])
+                paragraph = paragraph[cut:].lstrip()
+            current = paragraph
+        if current:
+            chunks.append(current)
+        return chunks
+
     def send_text(self, text: str) -> None:
         """Fallback / auxiliary plain-text message (e.g. for error alerts)."""
         url = TELEGRAM_API_BASE.format(token=self.bot_token, method="sendMessage")

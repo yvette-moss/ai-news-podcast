@@ -91,8 +91,18 @@ def run_pipeline(config: Config, dry_run: bool = False) -> int:
         )
         audio_path = audio_gen.generate(script_text, output_dir)
     except AudioGenerationError:
-        logger.exception("Audio generation failed.")
-        return 1
+        logger.exception("Audio generation failed; falling back to a text episode.")
+        if dry_run:
+            logger.info("Dry run: skipping text fallback delivery. Script is in ./output.")
+            return 1
+        try:
+            notifier = TelegramNotifier(bot_token=config.telegram_bot_token, chat_id=config.telegram_chat_id)
+            notifier.send_text_episode(script_text, headline_articles=articles)
+        except TelegramDeliveryError:
+            logger.exception("Text fallback delivery failed.")
+            return 1
+        logger.warning("Delivered as TEXT to Telegram chat %s (voice generation failed).", config.telegram_chat_id)
+        return 0
     logger.info("Audio ready -> %s", audio_path)
 
     if dry_run:
